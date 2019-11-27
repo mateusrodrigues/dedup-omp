@@ -50,7 +50,7 @@
 #endif //ENABLE_BZIP2_COMPRESSION
 
 #ifdef ENABLE_PTHREADS
-#include <pthread.h>
+#include <omp.h>
 #endif //ENABLE_PTHREADS
 
 #ifdef ENABLE_PARSEC_HOOKS
@@ -397,8 +397,8 @@ void sub_Compress(chunk_t *chunk) {
  *  - Enqueue each item into send queue
  */
 #ifdef ENABLE_PTHREADS
-void *Compress(void * targs) {
-  struct thread_args *args = (struct thread_args *)targs;
+stats_t* Compress(struct thread_args *args) {
+  args->tid = omp_get_thread_num();
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t * chunk;
   int r;
@@ -522,8 +522,8 @@ int sub_Deduplicate(chunk_t *chunk) {
  *  - Route resulting package either to compression stage or to reorder stage, depending on deduplication status
  */
 #ifdef ENABLE_PTHREADS
-void * Deduplicate(void * targs) {
-  struct thread_args *args = (struct thread_args *)targs;
+stats_t* Deduplicate(struct thread_args *args) {
+  args->tid = omp_get_thread_num();
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t *chunk;
   int r;
@@ -621,8 +621,9 @@ void * Deduplicate(void * targs) {
  *  - Allocates mbuffers for fine-granular chunks
  */
 #ifdef ENABLE_PTHREADS
-void *FragmentRefine(void * targs) {
-  struct thread_args *args = (struct thread_args *)targs;
+stats_t* FragmentRefine(struct thread_args *args) {
+  // struct thread_args *args = (struct thread_args *)targs;
+  args->tid = omp_get_thread_num();
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   ringbuffer_t recv_buf, send_buf;
   int r;
@@ -736,7 +737,6 @@ void *FragmentRefine(void * targs) {
   free(rabinwintab);
   ringbuffer_destroy(&recv_buf);
   ringbuffer_destroy(&send_buf);
-
   //shutdown
   queue_terminate(&deduplicate_que[qid]);
 #ifdef ENABLE_STATISTICS
@@ -979,8 +979,7 @@ void *SerialIntegratedPipeline(void * targs) {
  * input size.
  */
 #ifdef ENABLE_PTHREADS
-void *Fragment(void * targs){
-  struct thread_args *args = (struct thread_args *)targs;
+void Fragment(struct thread_args *args){
   size_t preloading_buffer_seek = 0;
   int qid = 0;
   int fd = args->fd;
@@ -1193,8 +1192,7 @@ void *Fragment(void * targs){
  *    the compressed data for a duplicate chunk.
  */
 #ifdef ENABLE_PTHREADS
-void *Reorder(void * targs) {
-  struct thread_args *args = (struct thread_args *)targs;
+void Reorder(struct thread_args *args) {
   int qid = 0;
   int fd = 0;
 
@@ -1462,14 +1460,6 @@ void Encode(config_t * _conf) {
   }
 
 #ifdef ENABLE_PTHREADS
-  /* Variables for 3 thread pools and 2 pipeline stage threads.
-   * The first and the last stage are serial (mostly I/O).
-   */
-  pthread_t threads_anchor[MAX_THREADS],
-    threads_chunk[MAX_THREADS],
-    threads_compress[MAX_THREADS],
-    threads_send, threads_process;
-
   data_process_args.tid = 0;
   data_process_args.nqueues = nqueues;
   data_process_args.fd = fd;
@@ -1478,50 +1468,79 @@ void Encode(config_t * _conf) {
     __parsec_roi_begin();
 #endif
 
-  //thread for first pipeline stage (input)
-  pthread_create(&threads_process, NULL, Fragment, &data_process_args);
-
-  //Create 3 thread pools for the intermediate pipeline stages
-  struct thread_args anchor_thread_args[conf->nthreads];
-  for (i = 0; i < conf->nthreads; i ++) {
-     anchor_thread_args[i].tid = i;
-     pthread_create(&threads_anchor[i], NULL, FragmentRefine, &anchor_thread_args[i]);
-  }
-
-  struct thread_args chunk_thread_args[conf->nthreads];
-  for (i = 0; i < conf->nthreads; i ++) {
-    chunk_thread_args[i].tid = i;
-    pthread_create(&threads_chunk[i], NULL, Deduplicate, &chunk_thread_args[i]);
-  }
-
-  struct thread_args compress_thread_args[conf->nthreads];
-  for (i = 0; i < conf->nthreads; i ++) {
-    compress_thread_args[i].tid = i;
-    pthread_create(&threads_compress[i], NULL, Compress, &compress_thread_args[i]);
-  }
-
-  //thread for last pipeline stage (output)
-  struct thread_args send_block_args;
-  send_block_args.tid = 0;
-  send_block_args.nqueues = nqueues;
-  pthread_create(&threads_send, NULL, Reorder, &send_block_args);
-
-  /*** parallel phase ***/
-
   //Return values of threads
   stats_t *threads_anchor_rv[conf->nthreads];
   stats_t *threads_chunk_rv[conf->nthreads];
   stats_t *threads_compress_rv[conf->nthreads];
 
-  //join all threads 
-  pthread_join(threads_process, NULL);
-  for (i = 0; i < conf->nthreads; i ++)
-    pthread_join(threads_anchor[i], (void **)&threads_anchor_rv[i]);
-  for (i = 0; i < conf->nthreads; i ++)
-    pthread_join(threads_chunk[i], (void **)&threads_chunk_rv[i]);
-  for (i = 0; i < conf->nthreads; i ++)
-    pthread_join(threads_compress[i], (void **)&threads_compress_rv[i]);
-  pthread_join(threads_send, NULL);
+  /*
+   * -----------------------------------------------------
+   * --- First Pipeline Stage (single-threaded, input) ---
+   * -----------------------------------------------------
+   */
+  #pragma omp parallel num_threads(1) shared(data_process_args) \
+    default(none)
+  Fragment(&data_process_args);
+
+  /*
+   * -------------------------------------------------------------------
+   * ---                  Parallel Thread Pools                      ---
+   * --- Creates 3 thread pools for the intermediate pipeline stages ---
+   * -------------------------------------------------------------------
+   */
+
+  int nthreads = conf->nthreads;
+
+  /*
+   * ----------------------------------
+   * ---- 1. FragmentRefine Block -----
+   * ----------------------------------
+   */
+  printf("FragmentRefine\n");
+  struct thread_args anchor_thread_args[conf->nthreads];
+  #pragma omp parallel num_threads(nthreads) \
+    shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
+  threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
+
+
+  /*
+   * -------------------------------
+   * ---- 2. Deduplicate Block -----
+   * -------------------------------
+   */
+  printf("Deduplicate\n");
+  struct thread_args chunk_thread_args[conf->nthreads];
+  #pragma omp parallel num_threads(nthreads) \
+    shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
+  threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
+
+  /*
+   * ----------------------------
+   * ---- 3. Compress Block -----
+   * ----------------------------
+   */
+  printf("Compress\n");
+  struct thread_args compress_thread_args[conf->nthreads];
+  #pragma omp parallel num_threads(nthreads) \
+    shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
+    threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
+
+  //thread for last pipeline stage (output)
+  struct thread_args send_block_args;
+  send_block_args.tid = 0;
+  send_block_args.nqueues = nqueues;
+  
+  /*
+   * -----------------------------------------------------
+   * --- Last Pipeline Stage (single-threaded, output) ---
+   * -----------------------------------------------------
+   */
+  #pragma omp parallel num_threads(1) shared(send_block_args) \
+    default(none)
+  Reorder(&send_block_args);
+
+  printf("Done\n");
+  /*** parallel phase ***/
 
 #ifdef ENABLE_PARSEC_HOOKS
   __parsec_roi_end();

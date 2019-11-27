@@ -26,7 +26,7 @@ LIBS += -lz
 
 ifdef version
   ifeq "$(version)" "pthreads"
-    CFLAGS += -DENABLE_PTHREADS -pthread
+    CFLAGS += -DENABLE_PTHREADS -pthread -fopenmp
     DEDUP_OBJ += queue.o binheap.o tree.o
   endif
 endif
