@@ -1,0 +1,2 @@
+1. install libssl-dev (linked with -lssl -lcrypto)
+2. install zlib1g-dev (linked with -lz)
