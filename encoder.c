@@ -1468,6 +1468,12 @@ void Encode(config_t * _conf) {
     __parsec_roi_begin();
 #endif
 
+  /*
+   * -----------------------------------
+   * --- BEGINNING OF PARALLEL PHASE ---
+   * -----------------------------------
+   */
+
   //Return values of threads
   stats_t *threads_anchor_rv[conf->nthreads];
   stats_t *threads_chunk_rv[conf->nthreads];
@@ -1540,7 +1546,12 @@ void Encode(config_t * _conf) {
   Reorder(&send_block_args);
 
   printf("Done\n");
-  /*** parallel phase ***/
+  
+  /*
+   * -----------------------------
+   * --- END OF PARALLEL PHASE ---
+   * -----------------------------
+   */
 
 #ifdef ENABLE_PARSEC_HOOKS
   __parsec_roi_end();
