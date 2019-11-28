@@ -260,14 +260,13 @@ static int create_output_file(char *outfile) {
 #ifdef ENABLE_PTHREADS
 //NOTE: The parallel version checks the state of each chunk to make sure the
 //      relevant data is available. If it is not then the function waits.
-// TODO: [PCD] Check OpenMP support
 static void write_chunk_to_file(int fd, chunk_t *chunk) {
   assert(chunk!=NULL);
 
   //Find original chunk
   if(chunk->header.isDuplicate) chunk = chunk->compressed_data_ref;
 
-  omp_set_lock(&chunk->header.lock);
+  pthread_mutex_lock(&chunk->header.lock);
   while(chunk->header.state == CHUNK_STATE_UNCOMPRESSED) {
     pthread_cond_wait(&chunk->header.update, &chunk->header.lock);
   }
@@ -282,7 +281,7 @@ static void write_chunk_to_file(int fd, chunk_t *chunk) {
     //Chunk data has been written to file before, just write SHA1
     write_file(fd, TYPE_FINGERPRINT, SHA1_LEN, (unsigned char *)(chunk->sha1));
   }
-  omp_unset_lock(&chunk->header.lock);
+  pthread_mutex_unlock(&chunk->header.lock);
 }
 #else
 //NOTE: The serial version relies on the fact that chunks are processed in-order,
@@ -317,7 +316,7 @@ void sub_Compress(chunk_t *chunk) {
     assert(chunk!=NULL);
     //compress the item and add it to the database
 #ifdef ENABLE_PTHREADS
-    omp_set_lock(&chunk->header.lock);
+    pthread_mutex_lock(&chunk->header.lock);
     assert(chunk->header.state == CHUNK_STATE_UNCOMPRESSED);
 #endif //ENABLE_PTHREADS
     switch (conf->compress_type) {
@@ -382,7 +381,7 @@ void sub_Compress(chunk_t *chunk) {
 #ifdef ENABLE_PTHREADS
     chunk->header.state = CHUNK_STATE_COMPRESSED;
     pthread_cond_broadcast(&chunk->header.update);
-    omp_unset_lock(&chunk->header.lock);
+    pthread_mutex_unlock(&chunk->header.lock);
 #endif //ENABLE_PTHREADS
 
      return;
@@ -494,7 +493,7 @@ int sub_Deduplicate(chunk_t *chunk) {
   if (!isDuplicate) {
     // Cache miss: Create entry in hash table and forward data to compression stage
 #ifdef ENABLE_PTHREADS
-    omp_init_lock(&chunk->header.lock);
+    pthread_mutex_init(&chunk->header.lock, NULL);
     pthread_cond_init(&chunk->header.update, NULL);
 #endif
     //NOTE: chunk->compressed_data.buffer will be computed in compression stage
@@ -1503,7 +1502,7 @@ void Encode(config_t * _conf) {
    * ----------------------------------
    */
   printf("FragmentRefine\n");
-  struct thread_args anchor_thread_args[conf->nthreads];
+  struct thread_args anchor_thread_args[nthreads];
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
   threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
@@ -1515,7 +1514,7 @@ void Encode(config_t * _conf) {
    * -------------------------------
    */
   printf("Deduplicate\n");
-  struct thread_args chunk_thread_args[conf->nthreads];
+  struct thread_args chunk_thread_args[nthreads];
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
   threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
@@ -1526,7 +1525,7 @@ void Encode(config_t * _conf) {
    * ----------------------------
    */
   printf("Compress\n");
-  struct thread_args compress_thread_args[conf->nthreads];
+  struct thread_args compress_thread_args[nthreads];
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
     threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);

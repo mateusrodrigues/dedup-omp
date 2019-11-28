@@ -4,7 +4,6 @@
 #include <stdlib.h>
 
 #ifdef ENABLE_PTHREADS
-#include <omp.h>
 #include <pthread.h>
 #endif //ENABLE_PTHREADS
 
@@ -27,7 +26,7 @@ struct _queue_t {
   int nProducers;
   int nTerminated;
 #ifdef ENABLE_PTHREADS
-  omp_lock_t mutex;
+  pthread_mutex_t mutex;
   pthread_cond_t notEmpty, notFull;
 #endif //ENABLE_PTHREADS
 };
