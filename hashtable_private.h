@@ -8,7 +8,7 @@
 #include "config.h"
 
 #ifdef ENABLE_PTHREADS
-#include <pthread.h>
+#include <omp.h>
 #endif
 
 #include "hashtable.h"
@@ -30,7 +30,7 @@ struct hashtable {
     struct hash_entry **table;
 #ifdef ENABLE_PTHREADS
     //Each entry in table array is protected with its own lock
-    pthread_mutex_t *locks;
+    omp_lock_t *locks;
 #endif
 #ifdef ENABLE_DYNAMIC_EXPANSION
     unsigned int entrycount;

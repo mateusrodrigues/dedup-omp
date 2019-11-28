@@ -267,7 +267,7 @@ static void write_chunk_to_file(int fd, chunk_t *chunk) {
   //Find original chunk
   if(chunk->header.isDuplicate) chunk = chunk->compressed_data_ref;
 
-  pthread_mutex_lock(&chunk->header.lock);
+  omp_set_lock(&chunk->header.lock);
   while(chunk->header.state == CHUNK_STATE_UNCOMPRESSED) {
     pthread_cond_wait(&chunk->header.update, &chunk->header.lock);
   }
@@ -282,7 +282,7 @@ static void write_chunk_to_file(int fd, chunk_t *chunk) {
     //Chunk data has been written to file before, just write SHA1
     write_file(fd, TYPE_FINGERPRINT, SHA1_LEN, (unsigned char *)(chunk->sha1));
   }
-  pthread_mutex_unlock(&chunk->header.lock);
+  omp_unset_lock(&chunk->header.lock);
 }
 #else
 //NOTE: The serial version relies on the fact that chunks are processed in-order,
@@ -317,7 +317,7 @@ void sub_Compress(chunk_t *chunk) {
     assert(chunk!=NULL);
     //compress the item and add it to the database
 #ifdef ENABLE_PTHREADS
-    pthread_mutex_lock(&chunk->header.lock);
+    omp_set_lock(&chunk->header.lock);
     assert(chunk->header.state == CHUNK_STATE_UNCOMPRESSED);
 #endif //ENABLE_PTHREADS
     switch (conf->compress_type) {
@@ -382,7 +382,7 @@ void sub_Compress(chunk_t *chunk) {
 #ifdef ENABLE_PTHREADS
     chunk->header.state = CHUNK_STATE_COMPRESSED;
     pthread_cond_broadcast(&chunk->header.update);
-    pthread_mutex_unlock(&chunk->header.lock);
+    omp_unset_lock(&chunk->header.lock);
 #endif //ENABLE_PTHREADS
 
      return;
@@ -485,8 +485,8 @@ int sub_Deduplicate(chunk_t *chunk) {
 
   //Query database to determine whether we've seen the data chunk before
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_t *ht_lock = hashtable_getlock(cache, (void *)(chunk->sha1));
-  pthread_mutex_lock(ht_lock);
+  omp_lock_t *ht_lock = hashtable_getlock(cache, (void *)(chunk->sha1));
+  omp_set_lock(ht_lock);
 #endif
   entry = (chunk_t *)hashtable_search(cache, (void *)(chunk->sha1));
   isDuplicate = (entry != NULL);
@@ -494,7 +494,7 @@ int sub_Deduplicate(chunk_t *chunk) {
   if (!isDuplicate) {
     // Cache miss: Create entry in hash table and forward data to compression stage
 #ifdef ENABLE_PTHREADS
-    pthread_mutex_init(&chunk->header.lock, NULL);
+    omp_init_lock(&chunk->header.lock);
     pthread_cond_init(&chunk->header.update, NULL);
 #endif
     //NOTE: chunk->compressed_data.buffer will be computed in compression stage
@@ -507,7 +507,7 @@ int sub_Deduplicate(chunk_t *chunk) {
     mbuffer_free(&chunk->uncompressed_data);
   }
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_unlock(ht_lock);
+  omp_unset_lock(ht_lock);
 #endif
 
   return isDuplicate;

@@ -10,7 +10,7 @@
 
 void queue_init(queue_t * que, size_t size, int nProducers) {
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_init(&que->mutex, NULL);
+  omp_init_lock(&que->mutex);
   pthread_cond_init(&que->notEmpty, NULL);
   pthread_cond_init(&que->notFull, NULL);
 #endif
@@ -21,7 +21,7 @@ void queue_init(queue_t * que, size_t size, int nProducers) {
 
 void queue_destroy(queue_t * que) {
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_destroy(&que->mutex);
+  omp_destroy_lock(&que->mutex);
   pthread_cond_destroy(&que->notEmpty);
   pthread_cond_destroy(&que->notFull);
 #endif
@@ -36,13 +36,13 @@ static inline int queue_isTerminated(queue_t * que) {
 
 void queue_terminate(queue_t * que) {
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_lock(&que->mutex);
+  omp_set_lock(&que->mutex);
 #endif
   que->nTerminated++;
   assert(que->nTerminated <= que->nProducers);
 #ifdef ENABLE_PTHREADS
   if(queue_isTerminated(que)) pthread_cond_broadcast(&que->notEmpty);
-  pthread_mutex_unlock(&que->mutex);
+  omp_unset_lock(&que->mutex);
 #endif
 }
 
@@ -50,14 +50,14 @@ int queue_dequeue(queue_t *que, ringbuffer_t *buf, int limit) {
   int i;
 
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_lock(&que->mutex);
+  omp_set_lock(&que->mutex);
   while (ringbuffer_isEmpty(&que->buf) && !queue_isTerminated(que)) {
     pthread_cond_wait(&que->notEmpty, &que->mutex);
   }
 #endif
   if (ringbuffer_isEmpty(&que->buf) && queue_isTerminated(que)) {
 #ifdef ENABLE_PTHREADS
-    pthread_mutex_unlock(&que->mutex);
+    omp_unset_lock(&que->mutex);
 #endif
     return -1;
   }
@@ -75,7 +75,7 @@ int queue_dequeue(queue_t *que, ringbuffer_t *buf, int limit) {
   }
 #ifdef ENABLE_PTHREADS
   if(i>0) pthread_cond_signal(&que->notFull);
-  pthread_mutex_unlock(&que->mutex);
+  omp_unset_lock(&que->mutex);
 #endif
   return i;
 }
@@ -84,7 +84,7 @@ int queue_enqueue(queue_t *que, ringbuffer_t *buf, int limit) {
   int i;
 
 #ifdef ENABLE_PTHREADS
-  pthread_mutex_lock(&que->mutex);
+  omp_set_lock(&que->mutex);
   assert(!queue_isTerminated(que));
   while (ringbuffer_isFull(&que->buf))
     pthread_cond_wait(&que->notFull, &que->mutex);
@@ -105,7 +105,7 @@ int queue_enqueue(queue_t *que, ringbuffer_t *buf, int limit) {
   }
 #ifdef ENABLE_PTHREADS
   if(i>0) pthread_cond_signal(&que->notEmpty);
-  pthread_mutex_unlock(&que->mutex);
+  omp_unset_lock(&que->mutex);
 #endif
   return i;
 }

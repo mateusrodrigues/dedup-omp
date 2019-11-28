@@ -6,6 +6,7 @@
 #include <assert.h>
 
 #ifdef ENABLE_PTHREADS
+#include <omp.h>
 #include <pthread.h>
 #endif //ENABLE_PTHREADS
 
@@ -24,17 +25,17 @@
 #define ENABLE_SPIN_LOCKS
 
 #ifdef ENABLE_SPIN_LOCKS
-typedef pthread_spinlock_t pthread_lock_t;
-#define PTHREAD_LOCK_INIT(l) pthread_spin_init(l, PTHREAD_PROCESS_PRIVATE)
-#define PTHREAD_LOCK_DESTROY(l) pthread_spin_destroy(l)
-#define PTHREAD_LOCK(l) pthread_spin_lock(l)
-#define PTHREAD_UNLOCK(l) pthread_spin_unlock(l)
+typedef pthread_spinlock_t lock_t;
+#define LOCK_INIT(l) pthread_spin_init(l, PTHREAD_PROCESS_PRIVATE)
+#define LOCK_DESTROY(l) pthread_spin_destroy(l)
+#define SET_LOCK(l) pthread_spin_lock(l)
+#define UNSET_LOCK(l) pthread_spin_unlock(l)
 #else
-typedef pthread_mutex_t pthread_lock_t;
-#define PTHREAD_LOCK_INIT(l) pthread_mutex_init(l, NULL)
-#define PTHREAD_LOCK_DESTROY(l) pthread_mutex_destroy(l)
-#define PTHREAD_LOCK(l) pthread_mutex_lock(l)
-#define PTHREAD_UNLOCK(l) pthread_mutex_unlock(l)
+typedef omp_lock_t lock_t;
+#define LOCK_INIT(l) omp_init_lock(l)
+#define LOCK_DESTROY(l) omp_destroy_lock(l)
+#define SET_LOCK(l) omp_set_lock(l)
+#define UNSET_LOCK(l) omp_unset_lock(l)
 #endif //ENABLE_SPIN_LOCKS
 
 //Array with global locks to use. We use many mutexes to achieve some concurrency.
@@ -42,7 +43,7 @@ typedef pthread_mutex_t pthread_lock_t;
 //FIXME: Update documentation with latest changes
 //Unfortunately mutexes cannot be stored inside the memory buffers because of
 //concurrent free operations
-pthread_lock_t *locks = NULL;
+lock_t *locks = NULL;
 
 //Number of locks to use. More locks means higher potential concurrency, assuming lock usage is reasonably balanced.
 //We use a prime number for that value to get a simple but effective hash function
@@ -62,13 +63,13 @@ int mbuffer_system_init() {
   int i;
 
   assert(locks==NULL);
-  locks = malloc(NUMBER_OF_LOCKS * sizeof(pthread_lock_t));
+  locks = malloc(NUMBER_OF_LOCKS * sizeof(lock_t));
   if(locks==NULL) return -1;
   for(i=0; i<NUMBER_OF_LOCKS; i++) {
-    if(PTHREAD_LOCK_INIT(&locks[i]) != 0) {
+    if(LOCK_INIT(&locks[i]) != 0) {
       int j;
       for(j=0; j<i; j++) {
-        PTHREAD_LOCK_DESTROY(&locks[i]);
+        LOCK_DESTROY(&locks[i]);
       }
       free((void *)locks);
       locks=NULL;
@@ -85,7 +86,7 @@ int mbuffer_system_destroy() {
   int i, rv;
   rv=0;
   for(i=0; i<NUMBER_OF_LOCKS; i++) {
-    rv+=PTHREAD_LOCK_DESTROY(&locks[i]);
+    rv+=LOCK_DESTROY(&locks[i]);
   }
   free((void *)locks);
   locks=NULL;
@@ -137,10 +138,10 @@ mbuffer_t *mbuffer_clone(mbuffer_t *m) {
 
   //Update reference counter
 #ifdef ENABLE_PTHREADS
-  PTHREAD_LOCK(&locks[lock_hash(m->mcb)]);
+  SET_LOCK(&locks[lock_hash(m->mcb)]);
   assert(m->mcb->i>=1);
   m->mcb->i++;
-  PTHREAD_UNLOCK(&locks[lock_hash(m->mcb)]);
+  UNSET_LOCK(&locks[lock_hash(m->mcb)]);
 #else
   assert(m->mcb->i>=1);
   m->mcb->i++;
@@ -194,10 +195,10 @@ void mbuffer_free(mbuffer_t *m) {
 
   //Update meta state first to avoid races
 #ifdef ENABLE_PTHREADS
-  PTHREAD_LOCK(&locks[lock_hash(m->mcb)]);
+  SET_LOCK(&locks[lock_hash(m->mcb)]);
   m->mcb->i--;
   ref = m->mcb->i;
-  PTHREAD_UNLOCK(&locks[lock_hash(m->mcb)]);
+  UNSET_LOCK(&locks[lock_hash(m->mcb)]);
 #else
   m->mcb->i--;
   ref = m->mcb->i;
@@ -227,20 +228,20 @@ int mbuffer_realloc(mbuffer_t *m, size_t size) {
 #endif
 
 #ifdef ENABLE_PTHREADS
-  PTHREAD_LOCK(&locks[lock_hash(m->mcb)]);
+  SET_LOCK(&locks[lock_hash(m->mcb)]);
 #endif //ENABLE_PTHREADS
 
   //We cannot resize a buffer if more than one pointer to it is in circulation
   if(m->mcb->i > 1) {
 #ifdef ENABLE_PTHREADS
-    PTHREAD_UNLOCK(&locks[lock_hash(m->mcb)]);
+    UNSET_LOCK(&locks[lock_hash(m->mcb)]);
 #endif
     return -1;
   }
   //This must be the original mbuffer, otherwise we'd have to do something more complicated
   if(m->ptr != m->mcb->ptr) {
 #ifdef ENABLE_PTHREADS
-    PTHREAD_UNLOCK(&locks[lock_hash(m->mcb)]);
+    UNSET_LOCK(&locks[lock_hash(m->mcb)]);
 #endif
     return -1;
   }
@@ -253,7 +254,7 @@ int mbuffer_realloc(mbuffer_t *m, size_t size) {
   }
 
 #ifdef ENABLE_PTHREADS
-  PTHREAD_UNLOCK(&locks[lock_hash(m->mcb)]);
+  UNSET_LOCK(&locks[lock_hash(m->mcb)]);
 #endif
 
   if(r == NULL) {
@@ -277,10 +278,10 @@ int mbuffer_split(mbuffer_t *m1, mbuffer_t *m2, size_t split) {
 
   //Update reference counter
 #ifdef ENABLE_PTHREADS
-  PTHREAD_LOCK(&locks[lock_hash(m1->mcb)]);
+  SET_LOCK(&locks[lock_hash(m1->mcb)]);
   assert(m1->mcb->i>=1);
   m1->mcb->i++;
-  PTHREAD_UNLOCK(&locks[lock_hash(m1->mcb)]);
+  UNSET_LOCK(&locks[lock_hash(m1->mcb)]);
 #else
   assert(m1->mcb->i>=1);
   m1->mcb->i++;

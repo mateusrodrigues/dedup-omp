@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 #include <assert.h>
+#include <omp.h>
 
 #include "config.h"
 #include "mbuffer.h"
@@ -154,7 +155,7 @@ typedef struct _chunk_t {
 #ifdef ENABLE_PTHREADS
     //once a chunk has been added to the global database accesses
     //to the state require synchronization b/c the chunk is globally viewable
-    pthread_mutex_t lock;
+    omp_lock_t lock;
     pthread_cond_t update;
 #endif //ENABLE_PTHREADS
   } header;
