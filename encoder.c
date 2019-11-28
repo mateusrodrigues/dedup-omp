@@ -396,9 +396,9 @@ void sub_Compress(chunk_t *chunk) {
  *  - Enqueue each item into send queue
  */
 #ifdef ENABLE_PTHREADS
-stats_t* Compress(struct thread_args *args) {
-  args->tid = omp_get_thread_num();
-  printf("Compress task %d\n", omp_get_thread_num());
+stats_t* Compress(struct thread_args *args, int tid) {
+  args->tid = tid;
+  printf("Compress task %d\n", tid);
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t * chunk;
   int r;
@@ -522,9 +522,9 @@ int sub_Deduplicate(chunk_t *chunk) {
  *  - Route resulting package either to compression stage or to reorder stage, depending on deduplication status
  */
 #ifdef ENABLE_PTHREADS
-stats_t* Deduplicate(struct thread_args *args) {
-  args->tid = omp_get_thread_num();
-  printf("Deduplicate task %d\n", omp_get_thread_num());
+stats_t* Deduplicate(struct thread_args *args, int tid) {
+  args->tid = tid;
+  printf("Deduplicate task %d\n", tid);
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t *chunk;
   int r;
@@ -622,10 +622,10 @@ stats_t* Deduplicate(struct thread_args *args) {
  *  - Allocates mbuffers for fine-granular chunks
  */
 #ifdef ENABLE_PTHREADS
-stats_t* FragmentRefine(struct thread_args *args) {
+stats_t* FragmentRefine(struct thread_args *args, int tid) {
   // struct thread_args *args = (struct thread_args *)targs;
-  args->tid = omp_get_thread_num();
-  printf("FragmentRefine task %d\n", omp_get_thread_num());
+  args->tid = tid;
+  printf("FragmentRefine task %d\n", tid);
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   ringbuffer_t recv_buf, send_buf;
   int r;
@@ -1554,37 +1554,33 @@ void Encode(config_t * _conf) {
   send_block_args.nqueues = nqueues;
 
   double start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(nthreads) \
+  int totalThreads = 2 + (3 * nthreads);
+  #pragma omp parallel num_threads(totalThreads) \
     shared(nthreads, anchor_thread_args, chunk_thread_args, compress_thread_args, \
     threads_anchor_rv, threads_chunk_rv, threads_compress_rv, data_process_args, send_block_args) default(none)
   {
-    #pragma omp single
+    int current_thread = omp_get_thread_num();
+
+    if (current_thread == 0)
     {
       double fragment_start_time = omp_get_wtime();
       Fragment(&data_process_args);
       double fragment_elapsed_time = omp_get_wtime() - fragment_start_time;
       printf("Fragment elapsed time: %f\n", fragment_elapsed_time);
     }
-
-    #pragma omp sections
+    else if (current_thread > 0 && current_thread <= nthreads)
     {
-#pragma omp section
+      threads_anchor_rv[current_thread - 1] = FragmentRefine(&anchor_thread_args[current_thread - 1], current_thread - 1);
+    }
+    else if (current_thread > nthreads && current_thread <= 2*nthreads)
     {
-      threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);
+      threads_chunk_rv[current_thread - nthreads - 1] = Deduplicate(&chunk_thread_args[current_thread - nthreads - 1], current_thread - nthreads - 1);
     }
-
-    #pragma omp section
+    else if (current_thread > 2*nthreads && current_thread <= 3*nthreads)
     {
-      threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
+      threads_compress_rv[current_thread - 2*nthreads - 1] = Compress(&compress_thread_args[current_thread - 2*nthreads - 1], current_thread - 2*nthreads - 1);
     }
-    
-    #pragma omp section
-    {
-      threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
-    }
-    }
-
-    #pragma omp single
+    else
     {
       double reorder_start_time = omp_get_wtime();
       Reorder(&send_block_args);
