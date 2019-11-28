@@ -4,7 +4,7 @@ PREFIX=${PARSECDIR}/pkgs/kernels/dedup/inst/${PARSECPLAT}
 
 TARGET=dedup
 
-CFLAGS += -Wall -fno-strict-aliasing -D_XOPEN_SOURCE=600 # -O3 -ftree-vectorize -ftree-vectorizer-verbose=5 -fopt-info-vec-optimized
+CFLAGS += -Wall -fno-strict-aliasing -D_XOPEN_SOURCE=600 -O3 -ftree-vectorize -ftree-vectorizer-verbose=5 -fopt-info-vec-optimized
 
 ostype=$(findstring solaris, ${PARSECPLAT})
 

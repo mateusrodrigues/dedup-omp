@@ -1483,9 +1483,12 @@ void Encode(config_t * _conf) {
    * --- First Pipeline Stage (single-threaded, input) ---
    * -----------------------------------------------------
    */
+  double start_time = omp_get_wtime();
   #pragma omp parallel num_threads(1) shared(data_process_args) \
     default(none)
   Fragment(&data_process_args);
+  double elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time for Fragment (single-threaded): %f\n", elapsed_time);
 
   /*
    * -------------------------------------------------------------------
@@ -1501,11 +1504,13 @@ void Encode(config_t * _conf) {
    * ---- 1. FragmentRefine Block -----
    * ----------------------------------
    */
-  printf("FragmentRefine\n");
   struct thread_args anchor_thread_args[nthreads];
+  start_time = omp_get_wtime();
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
   threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
+  elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time for FragmentRefine: %f\n", elapsed_time);
 
 
   /*
@@ -1513,22 +1518,26 @@ void Encode(config_t * _conf) {
    * ---- 2. Deduplicate Block -----
    * -------------------------------
    */
-  printf("Deduplicate\n");
   struct thread_args chunk_thread_args[nthreads];
+  start_time = omp_get_wtime();
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
   threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
+  elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time for Deduplicate: %f\n", elapsed_time);
 
   /*
    * ----------------------------
    * ---- 3. Compress Block -----
    * ----------------------------
    */
-  printf("Compress\n");
   struct thread_args compress_thread_args[nthreads];
+  start_time = omp_get_wtime();
   #pragma omp parallel num_threads(nthreads) \
     shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
     threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
+  elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time for Compress: %f\n", elapsed_time);
 
   //thread for last pipeline stage (output)
   struct thread_args send_block_args;
@@ -1540,9 +1549,12 @@ void Encode(config_t * _conf) {
    * --- Last Pipeline Stage (single-threaded, output) ---
    * -----------------------------------------------------
    */
+  start_time = omp_get_wtime();
   #pragma omp parallel num_threads(1) shared(send_block_args) \
     default(none)
   Reorder(&send_block_args);
+  elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time for Reorder (single-threaded): %f\n", elapsed_time);
 
   printf("Done\n");
   
