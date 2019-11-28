@@ -398,6 +398,7 @@ void sub_Compress(chunk_t *chunk) {
 #ifdef ENABLE_PTHREADS
 stats_t* Compress(struct thread_args *args) {
   args->tid = omp_get_thread_num();
+  printf("Compress task %d\n", omp_get_thread_num());
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t * chunk;
   int r;
@@ -523,6 +524,7 @@ int sub_Deduplicate(chunk_t *chunk) {
 #ifdef ENABLE_PTHREADS
 stats_t* Deduplicate(struct thread_args *args) {
   args->tid = omp_get_thread_num();
+  printf("Deduplicate task %d\n", omp_get_thread_num());
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   chunk_t *chunk;
   int r;
@@ -623,6 +625,7 @@ stats_t* Deduplicate(struct thread_args *args) {
 stats_t* FragmentRefine(struct thread_args *args) {
   // struct thread_args *args = (struct thread_args *)targs;
   args->tid = omp_get_thread_num();
+  printf("FragmentRefine task %d\n", omp_get_thread_num());
   const int qid = args->tid / MAX_THREADS_PER_QUEUE;
   ringbuffer_t recv_buf, send_buf;
   int r;
@@ -979,6 +982,7 @@ void *SerialIntegratedPipeline(void * targs) {
  */
 #ifdef ENABLE_PTHREADS
 void Fragment(struct thread_args *args){
+  printf("Fragment task %d\n", omp_get_thread_num());
   size_t preloading_buffer_seek = 0;
   int qid = 0;
   int fd = args->fd;
@@ -1192,6 +1196,7 @@ void Fragment(struct thread_args *args){
  */
 #ifdef ENABLE_PTHREADS
 void Reorder(struct thread_args *args) {
+  printf("Reorder task %d\n", omp_get_thread_num());
   int qid = 0;
   int fd = 0;
 
@@ -1483,12 +1488,12 @@ void Encode(config_t * _conf) {
    * --- First Pipeline Stage (single-threaded, input) ---
    * -----------------------------------------------------
    */
-  double start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(1) shared(data_process_args) \
-    default(none)
-  Fragment(&data_process_args);
-  double elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time for Fragment (single-threaded): %f\n", elapsed_time);
+  // double start_time = omp_get_wtime();
+  // #pragma omp parallel num_threads(1) shared(data_process_args) \
+  //   default(none)
+  // Fragment(&data_process_args);
+  // double elapsed_time = omp_get_wtime() - start_time;
+  // printf("Elapsed time for Fragment (single-threaded): %f\n", elapsed_time);
 
   /*
    * -------------------------------------------------------------------
@@ -1504,57 +1509,109 @@ void Encode(config_t * _conf) {
    * ---- 1. FragmentRefine Block -----
    * ----------------------------------
    */
-  struct thread_args anchor_thread_args[nthreads];
-  start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(nthreads) \
-    shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
-  threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
-  elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time for FragmentRefine: %f\n", elapsed_time);
+  // struct thread_args anchor_thread_args[nthreads];
+  // start_time = omp_get_wtime();
+  // #pragma omp parallel num_threads(nthreads) \
+  //   shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
+  // threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
+  // elapsed_time = omp_get_wtime() - start_time;
+  // printf("Elapsed time for FragmentRefine: %f\n", elapsed_time);
 
 
-  /*
-   * -------------------------------
-   * ---- 2. Deduplicate Block -----
-   * -------------------------------
-   */
+  // /*
+  //  * -------------------------------
+  //  * ---- 2. Deduplicate Block -----
+  //  * -------------------------------
+  //  */
+  // struct thread_args chunk_thread_args[nthreads];
+  // start_time = omp_get_wtime();
+  // #pragma omp parallel num_threads(nthreads) \
+  //   shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
+  // threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
+  // elapsed_time = omp_get_wtime() - start_time;
+  // printf("Elapsed time for Deduplicate: %f\n", elapsed_time);
+
+  // /*
+  //  * ----------------------------
+  //  * ---- 3. Compress Block -----
+  //  * ----------------------------
+  //  */
+  // struct thread_args compress_thread_args[nthreads];
+  // start_time = omp_get_wtime();
+  // #pragma omp parallel num_threads(nthreads) \
+  //   shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
+  //   threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
+  // elapsed_time = omp_get_wtime() - start_time;
+  // printf("Elapsed time for Compress: %f\n", elapsed_time);
+
+  struct thread_args anchor_thread_args[nthreads];  
   struct thread_args chunk_thread_args[nthreads];
-  start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(nthreads) \
-    shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
-  threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
-  elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time for Deduplicate: %f\n", elapsed_time);
-
-  /*
-   * ----------------------------
-   * ---- 3. Compress Block -----
-   * ----------------------------
-   */
   struct thread_args compress_thread_args[nthreads];
-  start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(nthreads) \
-    shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
-    threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
-  elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time for Compress: %f\n", elapsed_time);
 
   //thread for last pipeline stage (output)
   struct thread_args send_block_args;
   send_block_args.tid = 0;
   send_block_args.nqueues = nqueues;
-  
+
+  double start_time = omp_get_wtime();
+  #pragma omp parallel num_threads(nthreads) \
+    shared(nthreads, anchor_thread_args, chunk_thread_args, compress_thread_args, \
+    threads_anchor_rv, threads_chunk_rv, threads_compress_rv, data_process_args, send_block_args) default(none)
+  {
+    #pragma omp single
+    {
+      double fragment_start_time = omp_get_wtime();
+      Fragment(&data_process_args);
+      double fragment_elapsed_time = omp_get_wtime() - fragment_start_time;
+      printf("Fragment elapsed time: %f\n", fragment_elapsed_time);
+    }
+
+    #pragma omp sections
+    {
+#pragma omp section
+    {
+      threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);
+    }
+
+    #pragma omp section
+    {
+      threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
+    }
+    
+    #pragma omp section
+    {
+      threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
+    }
+    }
+
+    #pragma omp single
+    {
+      double reorder_start_time = omp_get_wtime();
+      Reorder(&send_block_args);
+      double reorder_elapsed_time = omp_get_wtime() - reorder_start_time;
+      printf("Reorder elapsed time: %f\n", reorder_elapsed_time);
+    }
+  }
+  double elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time everything: %f\n", elapsed_time);
+
   /*
    * -----------------------------------------------------
    * --- Last Pipeline Stage (single-threaded, output) ---
    * -----------------------------------------------------
    */
-  start_time = omp_get_wtime();
-  #pragma omp parallel num_threads(1) shared(send_block_args) \
-    default(none)
-  Reorder(&send_block_args);
-  elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time for Reorder (single-threaded): %f\n", elapsed_time);
+
+  // //thread for last pipeline stage (output)
+  // struct thread_args send_block_args;
+  // send_block_args.tid = 0;
+  // send_block_args.nqueues = nqueues;
+
+  // start_time = omp_get_wtime();
+  // #pragma omp parallel num_threads(1) shared(send_block_args) \
+  //   default(none)
+  // Reorder(&send_block_args);
+  // elapsed_time = omp_get_wtime() - start_time;
+  // printf("Elapsed time for Reorder (single-threaded): %f\n", elapsed_time);
 
   printf("Done\n");
   
