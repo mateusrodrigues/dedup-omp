@@ -1472,77 +1472,12 @@ void Encode(config_t * _conf) {
     __parsec_roi_begin();
 #endif
 
-  /*
-   * -----------------------------------
-   * --- BEGINNING OF PARALLEL PHASE ---
-   * -----------------------------------
-   */
-
   //Return values of threads
   stats_t *threads_anchor_rv[conf->nthreads];
   stats_t *threads_chunk_rv[conf->nthreads];
   stats_t *threads_compress_rv[conf->nthreads];
 
-  /*
-   * -----------------------------------------------------
-   * --- First Pipeline Stage (single-threaded, input) ---
-   * -----------------------------------------------------
-   */
-  // double start_time = omp_get_wtime();
-  // #pragma omp parallel num_threads(1) shared(data_process_args) \
-  //   default(none)
-  // Fragment(&data_process_args);
-  // double elapsed_time = omp_get_wtime() - start_time;
-  // printf("Elapsed time for Fragment (single-threaded): %f\n", elapsed_time);
-
-  /*
-   * -------------------------------------------------------------------
-   * ---                  Parallel Thread Pools                      ---
-   * --- Creates 3 thread pools for the intermediate pipeline stages ---
-   * -------------------------------------------------------------------
-   */
-
   int nthreads = conf->nthreads;
-
-  /*
-   * ----------------------------------
-   * ---- 1. FragmentRefine Block -----
-   * ----------------------------------
-   */
-  // struct thread_args anchor_thread_args[nthreads];
-  // start_time = omp_get_wtime();
-  // #pragma omp parallel num_threads(nthreads) \
-  //   shared(nthreads, anchor_thread_args, threads_anchor_rv) default(none)
-  // threads_anchor_rv[omp_get_thread_num()] = FragmentRefine(&anchor_thread_args[omp_get_thread_num()]);  
-  // elapsed_time = omp_get_wtime() - start_time;
-  // printf("Elapsed time for FragmentRefine: %f\n", elapsed_time);
-
-
-  // /*
-  //  * -------------------------------
-  //  * ---- 2. Deduplicate Block -----
-  //  * -------------------------------
-  //  */
-  // struct thread_args chunk_thread_args[nthreads];
-  // start_time = omp_get_wtime();
-  // #pragma omp parallel num_threads(nthreads) \
-  //   shared(nthreads, chunk_thread_args, threads_chunk_rv) default(none)
-  // threads_chunk_rv[omp_get_thread_num()] = Deduplicate(&chunk_thread_args[omp_get_thread_num()]);
-  // elapsed_time = omp_get_wtime() - start_time;
-  // printf("Elapsed time for Deduplicate: %f\n", elapsed_time);
-
-  // /*
-  //  * ----------------------------
-  //  * ---- 3. Compress Block -----
-  //  * ----------------------------
-  //  */
-  // struct thread_args compress_thread_args[nthreads];
-  // start_time = omp_get_wtime();
-  // #pragma omp parallel num_threads(nthreads) \
-  //   shared(nthreads, compress_thread_args, threads_compress_rv) default(none)
-  //   threads_compress_rv[omp_get_thread_num()] = Compress(&compress_thread_args[omp_get_thread_num()]);
-  // elapsed_time = omp_get_wtime() - start_time;
-  // printf("Elapsed time for Compress: %f\n", elapsed_time);
 
   struct thread_args anchor_thread_args[nthreads];  
   struct thread_args chunk_thread_args[nthreads];
@@ -1552,6 +1487,12 @@ void Encode(config_t * _conf) {
   struct thread_args send_block_args;
   send_block_args.tid = 0;
   send_block_args.nqueues = nqueues;
+
+  /*
+   * -----------------------------------
+   * --- BEGINNING OF PARALLEL PHASE ---
+   * -----------------------------------
+   */
 
   double start_time = omp_get_wtime();
   int totalThreads = 2 + (3 * nthreads);
@@ -1563,59 +1504,67 @@ void Encode(config_t * _conf) {
 
     if (current_thread == 0)
     {
-      double fragment_start_time = omp_get_wtime();
+      /*
+       * -----------------------------------------------------
+       * --- First Pipeline Stage (single-threaded, input) ---
+       * -----------------------------------------------------
+       */
       Fragment(&data_process_args);
-      double fragment_elapsed_time = omp_get_wtime() - fragment_start_time;
-      printf("Fragment elapsed time: %f\n", fragment_elapsed_time);
     }
+    /*
+     * -------------------------------------------------------------------
+     * ---                  Parallel Thread Pools                      ---
+     * --- Creates 3 thread pools for the intermediate pipeline stages ---
+     * -------------------------------------------------------------------
+     */
     else if (current_thread > 0 && current_thread <= nthreads)
     {
+      /*
+       * ----------------------------------
+       * ---- 1. FragmentRefine Block -----
+       * ----------------------------------
+       */
       threads_anchor_rv[current_thread - 1] = FragmentRefine(&anchor_thread_args[current_thread - 1], current_thread - 1);
     }
     else if (current_thread > nthreads && current_thread <= 2*nthreads)
     {
+      /*
+       * -------------------------------
+       * ---- 2. Deduplicate Block -----
+       * -------------------------------
+       */
       threads_chunk_rv[current_thread - nthreads - 1] = Deduplicate(&chunk_thread_args[current_thread - nthreads - 1], current_thread - nthreads - 1);
     }
     else if (current_thread > 2*nthreads && current_thread <= 3*nthreads)
     {
+      /*
+       * ----------------------------
+       * ---- 3. Compress Block -----
+       * ----------------------------
+       */
       threads_compress_rv[current_thread - 2*nthreads - 1] = Compress(&compress_thread_args[current_thread - 2*nthreads - 1], current_thread - 2*nthreads - 1);
     }
     else
     {
-      double reorder_start_time = omp_get_wtime();
+      /*
+       * -----------------------------------------------------
+       * --- Last Pipeline Stage (single-threaded, output) ---
+       * -----------------------------------------------------
+       */
       Reorder(&send_block_args);
-      double reorder_elapsed_time = omp_get_wtime() - reorder_start_time;
-      printf("Reorder elapsed time: %f\n", reorder_elapsed_time);
     }
   }
-  double elapsed_time = omp_get_wtime() - start_time;
-  printf("Elapsed time everything: %f\n", elapsed_time);
-
-  /*
-   * -----------------------------------------------------
-   * --- Last Pipeline Stage (single-threaded, output) ---
-   * -----------------------------------------------------
-   */
-
-  // //thread for last pipeline stage (output)
-  // struct thread_args send_block_args;
-  // send_block_args.tid = 0;
-  // send_block_args.nqueues = nqueues;
-
-  // start_time = omp_get_wtime();
-  // #pragma omp parallel num_threads(1) shared(send_block_args) \
-  //   default(none)
-  // Reorder(&send_block_args);
-  // elapsed_time = omp_get_wtime() - start_time;
-  // printf("Elapsed time for Reorder (single-threaded): %f\n", elapsed_time);
-
-  printf("Done\n");
   
   /*
    * -----------------------------
    * --- END OF PARALLEL PHASE ---
    * -----------------------------
    */
+
+  double elapsed_time = omp_get_wtime() - start_time;
+  printf("Elapsed time everything: %f\n", elapsed_time);
+
+  printf("Done\n");
 
 #ifdef ENABLE_PARSEC_HOOKS
   __parsec_roi_end();
